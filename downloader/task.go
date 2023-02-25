@@ -13,14 +13,6 @@ import (
 	"time"
 )
 
-const (
-	Waiting  = "waiting"
-	Running  = "Running"
-	Paused   = "Paused"
-	Failed   = "Failed"
-	Finished = "Finished"
-)
-
 type DownloadTask struct {
 	id         string
 	maxWorkers int
@@ -82,14 +74,17 @@ func NewTaskToLocal(options *DownloadTaskOptions, m *DownloadManager, progressFi
 	return NewTask(options, m)
 }
 
+// GetID get the id of the task
 func (t *DownloadTask) GetID() string {
 	return t.id
 }
 
+// GetTotalDownload Get the size of the downloaded data
 func (t *DownloadTask) GetTotalDownload() int64 {
 	return t.totalWrite.Load()
 }
 
+// GetCompletedSize Get the completed size of the downloaded task
 func (t *DownloadTask) GetCompletedSize() (int64, error) {
 	unCompletedSize := int64(0)
 	for iterator := t.progressStore.newIterator(context.Background()); iterator.hasNext(); {
@@ -104,10 +99,12 @@ func (t *DownloadTask) GetCompletedSize() (int64, error) {
 	return t.progressStore.size - unCompletedSize, nil
 }
 
+// GetStatus get the status of the task
 func (t *DownloadTask) GetStatus() string {
 	return t.status
 }
 
+// Close closes the download task
 func (t *DownloadTask) Close() {
 	t.cancel()
 	t.group.Wait()
@@ -126,6 +123,7 @@ func (t *DownloadTask) Close() {
 	RecoverApplyFunc(func() { close(t.requireChan) })
 }
 
+// GetThreadCount Get the number of currently active download threads
 func (t *DownloadTask) GetThreadCount() int32 {
 	return t.activeThreads.Load()
 }
@@ -177,6 +175,7 @@ func (t *DownloadTask) doCalculateStatus() {
 	}
 }
 
+// Run  Execute the current download task
 func (t *DownloadTask) Run() {
 	t.eventHandler.OnStart(t)
 	t.status = Running
@@ -210,10 +209,12 @@ func (t *DownloadTask) Run() {
 	t.done.Wait()
 }
 
+// GetSize Get the total size of the files to be downloaded
 func (t *DownloadTask) GetSize() int64 {
 	return t.progressStore.size
 }
 
+// GetError Get the current download exceptions
 func (t *DownloadTask) GetError() error {
 	val := t.errorValue.Load()
 	if val != nil {
@@ -233,6 +234,7 @@ func (t *DownloadTask) storeError(err error, exit bool) {
 	}
 }
 
+// GetStatusInfo Get the status information of the current download task
 func (t *DownloadTask) GetStatusInfo() *DownloadTaskStatus {
 	return t.statusProcessor.GetInfo()
 }

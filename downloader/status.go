@@ -5,11 +5,19 @@ import (
 	"time"
 )
 
+const (
+	Waiting  = "Waiting"
+	Running  = "Running"
+	Paused   = "Paused"
+	Failed   = "Failed"
+	Finished = "Finished"
+)
+
 type DownloadTaskStatus struct {
 	Size          int64
 	CompletedSize int64
-	Status        string
-	Speed         int64
+	Status        string // Status of the download(Waiting、Running、Paused、Failed、Finished)
+	Speed         int64  // Download speed (bytes per second)
 	Threads       int32
 	Err           error
 }
