@@ -3,7 +3,6 @@ package downloader
 import (
 	"context"
 	"fmt"
-	"log"
 	"sync/atomic"
 )
 
@@ -51,7 +50,6 @@ func (block *TaskBlock) checkPoint() error {
 			b.end = block.end
 			block.end = block.start + l - 1
 			b.start = block.end + 1
-			log.Printf("splited block %v", b)
 			if err := b.FlushAll(); err != nil {
 				return err
 			}
