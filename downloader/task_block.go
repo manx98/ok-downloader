@@ -3,6 +3,7 @@ package downloader
 import (
 	"context"
 	"fmt"
+	"log"
 	"sync/atomic"
 )
 
@@ -48,8 +49,9 @@ func (block *TaskBlock) checkPoint() error {
 		case b := <-block.requireChan:
 			l /= 2
 			b.end = block.end
-			block.end = block.start + l
+			block.end = block.start + l - 1
 			b.start = block.end + 1
+			log.Printf("splited block %v", b)
 			if err := b.FlushAll(); err != nil {
 				return err
 			}
@@ -64,12 +66,12 @@ func (block *TaskBlock) checkPoint() error {
 }
 
 func (block *TaskBlock) provider(b *TaskBlock) {
-	go func() {
+	RecoverGoroutine(func() {
 		select {
 		case <-block.ctx.Done():
 		case block.providerChan <- b:
 		}
-	}()
+	})
 }
 
 func (block *TaskBlock) FlushStart() (err error) {

@@ -1,8 +1,6 @@
 package downloader
 
 import (
-	"context"
-	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -21,9 +19,6 @@ type DownloadTaskStatusProcessor struct {
 	lastCalculatedTime time.Time
 	lastDownloadedSize int64
 	task               *DownloadTask
-	ctx                context.Context
-	cancel             context.CancelFunc
-	sync.WaitGroup
 }
 
 func NewDownloadTaskStatusProcessor(task *DownloadTask) *DownloadTaskStatusProcessor {
@@ -31,9 +26,7 @@ func NewDownloadTaskStatusProcessor(task *DownloadTask) *DownloadTaskStatusProce
 		task:               task,
 		lastCalculatedTime: time.Now(),
 	}
-	processor.Add(1)
 	processor.calculate()
-	processor.ctx, processor.cancel = context.WithCancel(context.Background())
 	return processor
 }
 
@@ -46,36 +39,18 @@ func (r *DownloadTaskStatusProcessor) calculate() {
 	now := time.Now()
 	totalDownload := r.task.GetTotalDownload()
 	r.Store(&DownloadTaskStatus{
-		Size:          r.task.GetSize(),
 		CompletedSize: size,
-		Threads:       r.task.GetThreadCount(),
-		Status:        r.task.GetStatus(),
 		Speed:         (totalDownload - r.lastDownloadedSize) * 1000 / (now.Sub(r.lastCalculatedTime).Milliseconds() + 1),
-		Err:           r.task.GetError(),
 	})
 	r.lastCalculatedTime = now
 	r.lastDownloadedSize = totalDownload
 }
 
 func (r *DownloadTaskStatusProcessor) GetInfo() *DownloadTaskStatus {
-	return r.Load().(*DownloadTaskStatus)
-}
-
-func (r *DownloadTaskStatusProcessor) Run() {
-	defer r.Done()
-	tick := time.Tick(1 * time.Second)
-	for {
-		select {
-		case <-r.ctx.Done():
-			r.calculate()
-			return
-		case <-tick:
-			r.calculate()
-		}
-	}
-}
-
-func (r *DownloadTaskStatusProcessor) Close() {
-	r.cancel()
-	r.Wait()
+	status := r.Load().(*DownloadTaskStatus)
+	status.Status = r.task.GetStatus()
+	status.Size = r.task.GetSize()
+	status.Threads = r.task.GetThreadCount()
+	status.Err = r.task.GetError()
+	return status
 }

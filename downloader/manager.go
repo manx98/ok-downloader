@@ -65,18 +65,6 @@ func (m *DownloadManager) ResolveFileSize(link *Link) (int64, error) {
 	}
 }
 
-func handleTask(task *DownloadTask) {
-	defer func() {
-		task.eventHandler.OnFinal(task, task.GetError())
-		if err := recover(); err != nil {
-			log.Printf("resolve task %s occurred panic: %v", task.id, err)
-			task.eventHandler.OnPanic(task, err)
-		}
-	}()
-	task.eventHandler.OnStart(task)
-	task.Run()
-}
-
 func (m *DownloadManager) Run() {
 	m.Add(m.maxWorkers)
 	for i := 0; i < m.maxWorkers; i++ {
@@ -87,7 +75,7 @@ func (m *DownloadManager) Run() {
 				case <-m.ctx.Done():
 					return
 				case task := <-m.taskChan:
-					handleTask(task)
+					task.Run()
 				}
 			}
 		}()
