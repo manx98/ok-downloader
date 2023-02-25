@@ -1,7 +1,11 @@
 package downloader
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"log"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -19,4 +23,59 @@ func ResolveContentRange(contentRange string) (int64, error) {
 		return contentLength, nil
 	}
 	return 0, fmt.Errorf("content-length not exist in response header")
+}
+
+func MergeBlocks(blocks []*TaskBlock) (err error) {
+	sort.Slice(blocks, func(i, j int) bool {
+		if blocks[i].start == blocks[j].start {
+			return blocks[i].end > blocks[j].end
+		}
+		return blocks[i].start < blocks[j].start
+	})
+	if len(blocks) > 1 {
+		before := blocks[0]
+		for i := 1; i < len(blocks); i++ {
+			now := blocks[i]
+			clean := (before.start <= now.start && before.end >= now.start && before.end >= now.end) ||
+				(before.end+1 == now.start) ||
+				(before.start <= now.start && before.end >= now.start && before.end <= now.end)
+			if clean {
+				if now.end > before.end {
+					before.end = now.end
+					if err = before.FlushEnd(); err != nil {
+						return err
+					}
+				}
+				now.start = now.end + 1
+				if err = now.FlushStart(); err != nil {
+					return err
+				}
+			} else {
+				before = blocks[i]
+			}
+		}
+	}
+	return
+}
+
+func RecoverGoroutine(f func()) {
+	go RecoverApplyFunc(f)
+}
+
+func RecoverApplyFunc(f func()) {
+	defer func() {
+		if err := recover(); err != nil {
+			log.Printf("failed to recover: %v", err)
+		}
+	}()
+	f()
+}
+
+func shouldIgnoreError(err error) bool {
+	if err == nil {
+		return true
+	}
+	return errors.Is(err, context.DeadlineExceeded) ||
+		errors.Is(err, context.Canceled) ||
+		err.Error() == "context deadline exceeded (Client.Timeout or context cancellation while reading body)"
 }

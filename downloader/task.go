@@ -5,10 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"github.com/google/uuid"
+	"io/fs"
 	"log"
 	"os"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 const (
@@ -20,9 +22,9 @@ const (
 )
 
 type DownloadTask struct {
-	id              string
-	maxWorkers      int
-	ctx             context.Context
+	id         string
+	maxWorkers int
+	context.Context
 	cancel          context.CancelFunc
 	m               *DownloadManager
 	dataStore       RandomReadWriter
@@ -32,6 +34,7 @@ type DownloadTask struct {
 	status          string
 	eventHandler    *EventHandler
 	group           sync.WaitGroup
+	done            sync.WaitGroup
 	errorValue      atomic.Value
 	blockChan       chan *TaskBlock
 	links           []*Link
@@ -55,7 +58,7 @@ func NewTask(options *DownloadTaskOptions, m *DownloadManager) (*DownloadTask, e
 			requireChan:  make(chan *TaskBlock),
 			providerChan: make(chan *TaskBlock),
 		}
-		task.ctx, task.cancel = context.WithCancel(m.ctx)
+		task.Context, task.cancel = context.WithCancel(m.ctx)
 		task.progressStore, err = newProgressStore(options.size, options.minBlockSize, options.maxBlockSize, options.maxWorkers, options.progressStore, task)
 		if err == nil {
 			task.statusProcessor = NewDownloadTaskStatusProcessor(task)
@@ -108,14 +111,19 @@ func (t *DownloadTask) GetStatus() string {
 func (t *DownloadTask) Close() {
 	t.cancel()
 	t.group.Wait()
+	t.done.Wait()
 	if err := t.dataStore.Close(); err != nil {
-		log.Printf("error closing data store: %v", err)
+		if !errors.Is(err, fs.ErrClosed) {
+			log.Printf("error closing data store: %v", err)
+		}
 	}
 	if err := t.progressStore.Close(); err != nil {
-		log.Printf("error closing progress store: %v", err)
+		if !errors.Is(err, fs.ErrClosed) {
+			log.Printf("error closing progress store: %v", err)
+		}
 	}
-	close(t.providerChan)
-	close(t.requireChan)
+	RecoverApplyFunc(func() { close(t.providerChan) })
+	RecoverApplyFunc(func() { close(t.requireChan) })
 }
 
 func (t *DownloadTask) GetThreadCount() int32 {
@@ -137,9 +145,42 @@ func (t *DownloadTask) threadWatcher(in bool) {
 	}
 }
 
+func (t *DownloadTask) handFinalStatus() {
+	t.cancel()
+	t.group.Wait()
+	t.statusProcessor.calculate()
+	info := t.GetStatusInfo()
+	if info.Size == info.CompletedSize {
+		t.status = Finished
+	} else if t.GetError() != nil {
+		t.status = Failed
+	} else {
+		t.status = Paused
+	}
+}
+
+func (t *DownloadTask) doCalculateStatus() {
+	defer t.done.Done()
+	defer t.handFinalStatus()
+	tik := time.Tick(1 * time.Second)
+	for {
+		select {
+		case <-tik:
+			t.statusProcessor.calculate()
+			status := t.GetStatusInfo()
+			if status.CompletedSize == status.Size {
+				return
+			}
+		case <-t.Done():
+			return
+		}
+	}
+}
+
 func (t *DownloadTask) Run() {
+	t.eventHandler.OnStart(t)
 	t.status = Running
-	iterator := t.progressStore.newIterator(t.ctx)
+	iterator := t.progressStore.newIterator(t)
 	found := true
 	for found {
 		found = false
@@ -162,23 +203,11 @@ func (t *DownloadTask) Run() {
 			}
 		}
 	}
-	go t.statusProcessor.Run()
-	defer t.statusProcessor.Close()
+	t.done.Add(1)
+	go t.doCalculateStatus()
 	t.group.Wait()
-	size, err := t.GetCompletedSize()
-	if err != nil {
-		if err01 := t.GetError(); err01 == nil {
-			t.storeError(err, false)
-		}
-		log.Printf("Error getting completed size: %v", err)
-		t.status = Failed
-	} else if size == t.GetSize() {
-		t.status = Finished
-	} else if t.GetError() != nil {
-		t.status = Failed
-	} else {
-		t.status = Paused
-	}
+	t.cancel()
+	t.done.Wait()
 }
 
 func (t *DownloadTask) GetSize() int64 {
@@ -194,7 +223,7 @@ func (t *DownloadTask) GetError() error {
 }
 
 func (t *DownloadTask) storeError(err error, exit bool) {
-	if err != nil && errors.Is(err, context.Canceled) {
+	if shouldIgnoreError(err) {
 		return
 	}
 	log.Printf("download task occurred error: %v", err)
@@ -202,10 +231,6 @@ func (t *DownloadTask) storeError(err error, exit bool) {
 	if exit {
 		t.cancel()
 	}
-}
-
-func (t *DownloadTask) GetContext() context.Context {
-	return t.ctx
 }
 
 func (t *DownloadTask) GetStatusInfo() *DownloadTaskStatus {

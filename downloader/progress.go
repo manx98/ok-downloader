@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"sort"
+	"log"
 	"sync"
 )
 
@@ -59,39 +59,6 @@ func (s *ProgressStore) WriteInt(value int, seek int64) error {
 	return err
 }
 
-func (s *ProgressStore) mergeBlocks(blocks []*TaskBlock) (err error) {
-	sort.SliceIsSorted(blocks, func(i, j int) bool {
-		if blocks[i].start == blocks[j].start {
-			return blocks[i].end > blocks[j].end
-		}
-		return blocks[i].start < blocks[j].start
-	})
-	if len(blocks) > 1 {
-		before := blocks[0]
-		for i := 1; i < len(blocks); i++ {
-			now := blocks[i]
-			clean := (before.start <= now.start && before.end >= now.start && before.end >= now.end) ||
-				(before.end+1 == now.start) ||
-				(before.start <= now.start && before.end >= now.start && before.end <= now.end)
-			if clean {
-				if now.end > before.end {
-					before.end = now.end
-					if err = before.FlushEnd(); err != nil {
-						return err
-					}
-				}
-				now.start = now.end + 1
-				if err = now.FlushStart(); err != nil {
-					return err
-				}
-			} else {
-				before = blocks[i]
-			}
-		}
-	}
-	return
-}
-
 func (s *ProgressStore) splitBlocks(okBlocks, badBlocks []*TaskBlock) error {
 	blockSize := s.getBeastBlockSize()
 	splitSize := blockSize + int64(s.minBlockSize)
@@ -135,7 +102,7 @@ func (s *ProgressStore) newBlock(offset, start, end int64) *TaskBlock {
 		offset:       offset,
 		dataStore:    s.task.dataStore,
 		totalWrite:   &s.task.totalWrite,
-		ctx:          s.task.ctx,
+		ctx:          s.task,
 		providerChan: s.task.providerChan,
 		requireChan:  s.task.requireChan,
 	}
@@ -176,16 +143,15 @@ type BlockIterator struct {
 }
 
 func (it *BlockIterator) next() (block *TaskBlock, err error) {
+	it.mtx.Lock()
+	defer it.mtx.Unlock()
 	if !it.hasNext() {
 		return nil, nil
 	}
-	it.mtx.Lock()
-	defer it.mtx.Unlock()
 	offset := it.offset*16 + DataHeaderSize
 	block = it.store.newBlock(offset, 0, 0)
 	if block.start, err = it.store.ReadInt64(offset); err == nil {
-		offset += 8
-		block.end, err = it.store.ReadInt64(offset)
+		block.end, err = it.store.ReadInt64(offset + 8)
 	}
 	if err != nil {
 		return
@@ -195,8 +161,6 @@ func (it *BlockIterator) next() (block *TaskBlock, err error) {
 }
 
 func (it *BlockIterator) hasNext() bool {
-	it.mtx.Lock()
-	defer it.mtx.Unlock()
 	return it.total > it.offset
 }
 
@@ -219,6 +183,11 @@ func (s *ProgressStore) getBeastBlockSize() int64 {
 }
 
 func (s *ProgressStore) init() error {
+	defer func() {
+		if err := s.store.Sync(); err != nil {
+			log.Printf("Error syncing progress: %v", err)
+		}
+	}()
 	var offset int64
 	size, err := s.ReadInt64(offset)
 	offset += 8
@@ -241,10 +210,14 @@ func (s *ProgressStore) init() error {
 	offset += 4
 	var blocks []*TaskBlock
 	var badBlocks []*TaskBlock
-	for iterator := s.newIterator(s.task.ctx); iterator.hasNext(); {
+	iterator := s.newIterator(s.task)
+	for {
 		block, err := iterator.next()
 		if err != nil {
 			return err
+		}
+		if block == nil {
+			break
 		}
 		if block.start <= block.end {
 			blocks = append(blocks, block)
@@ -252,7 +225,7 @@ func (s *ProgressStore) init() error {
 			badBlocks = append(badBlocks, block)
 		}
 	}
-	if err = s.mergeBlocks(blocks); err != nil {
+	if err = MergeBlocks(blocks); err != nil {
 		return err
 	}
 	var uncompletedSize int64
