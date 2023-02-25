@@ -2,6 +2,7 @@ package downloader
 
 import (
 	"context"
+	"fmt"
 )
 
 type DownloadHandler func(ctx context.Context, block *TaskBlock) error
@@ -43,6 +44,22 @@ func (p *DownloadProcessor) require(block *TaskBlock) {
 	})
 }
 
+func (p *DownloadProcessor) handle(block *TaskBlock) (exit bool) {
+	defer func() {
+		if block.start <= block.end {
+			p.provider(block)
+		}
+		if err := recover(); err != nil {
+			p.task.storeError(fmt.Errorf("download thread occur painc: %v", err), false)
+		}
+	}()
+	if err := p.handler(p.task, block); err != nil {
+		p.task.storeError(err, false)
+		return true
+	}
+	return false
+}
+
 func (p *DownloadProcessor) Run() {
 	var lastBlock *TaskBlock
 	for {
@@ -56,9 +73,7 @@ func (p *DownloadProcessor) Run() {
 		}
 		lastBlock = block
 		if block.start <= block.end {
-			if err = p.handler(p.task, block); err != nil {
-				p.task.storeError(err, false)
-				p.provider(block)
+			if p.handle(block) {
 				return
 			}
 		}
@@ -71,13 +86,11 @@ func (p *DownloadProcessor) Run() {
 		select {
 		case <-p.task.Done():
 			return
-		case block := <-p.providerChan:
-			if err := p.handler(p.task, block); err != nil {
-				p.task.storeError(err, false)
-				p.provider(block)
+		case lastBlock = <-p.providerChan:
+			if p.handle(lastBlock) {
 				return
 			} else {
-				p.require(block)
+				p.require(lastBlock)
 			}
 		}
 	}
