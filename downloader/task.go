@@ -7,7 +7,7 @@ import (
 	"github.com/google/uuid"
 	"io/fs"
 	"log"
-	"os"
+	"net/http"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -18,7 +18,6 @@ type DownloadTask struct {
 	maxWorkers int
 	context.Context
 	cancel          context.CancelFunc
-	m               *DownloadManager
 	dataStore       RandomReadWriter
 	progressStore   *ProgressStore
 	totalWrite      atomic.Int64
@@ -33,15 +32,16 @@ type DownloadTask struct {
 	requireChan     chan *TaskBlock
 	providerChan    chan *TaskBlock
 	statusProcessor *DownloadTaskStatusProcessor
+	httpClient      *http.Client
 }
 
-func NewTask(options *DownloadTaskOptions, m *DownloadManager) (*DownloadTask, error) {
+func NewTask(optionsProvider DownloadTaskOptionsProvider) (*DownloadTask, error) {
+	options := optionsProvider()
 	if u, err := uuid.NewUUID(); err != nil {
 		return nil, err
 	} else {
 		task := &DownloadTask{
 			id:           u.String(),
-			m:            m,
 			dataStore:    options.dataStore,
 			maxWorkers:   options.maxWorkers,
 			status:       Waiting,
@@ -50,28 +50,13 @@ func NewTask(options *DownloadTaskOptions, m *DownloadManager) (*DownloadTask, e
 			requireChan:  make(chan *TaskBlock),
 			providerChan: make(chan *TaskBlock),
 		}
-		task.Context, task.cancel = context.WithCancel(m.ctx)
+		task.Context, task.cancel = context.WithCancel(context.Background())
 		task.progressStore, err = newProgressStore(options.size, options.minBlockSize, options.maxBlockSize, options.maxWorkers, options.progressStore, task)
 		if err == nil {
 			task.statusProcessor = NewDownloadTaskStatusProcessor(task)
 		}
 		return task, err
 	}
-}
-
-func NewTaskToLocal(options *DownloadTaskOptions, m *DownloadManager, progressFilePath, dataFilePath string) (task *DownloadTask, err error) {
-	options.progressStore, err = os.OpenFile(progressFilePath, os.O_CREATE|os.O_RDWR, os.ModePerm)
-	if err != nil {
-		return nil, err
-	}
-	options.dataStore, err = os.OpenFile(dataFilePath, os.O_CREATE|os.O_RDWR, os.ModePerm)
-	if err != nil {
-		if err1 := options.progressStore.Close(); err1 != nil {
-			log.Printf("failed to close progress [%s] store: %v", progressFilePath, err1)
-		}
-		return nil, err
-	}
-	return NewTask(options, m)
 }
 
 // GetID get the id of the task
@@ -178,6 +163,12 @@ func (t *DownloadTask) doCalculateStatus() {
 // Run  Execute the current download task
 func (t *DownloadTask) Run() {
 	t.eventHandler.OnStart(t)
+	defer func() {
+		t.eventHandler.OnFinal(t, t.GetError())
+		if err := recover(); err != nil {
+			t.eventHandler.OnPanic(t, err)
+		}
+	}()
 	t.status = Running
 	iterator := t.progressStore.newIterator(t)
 	found := true
@@ -188,7 +179,7 @@ func (t *DownloadTask) Run() {
 				processor := NewDownloadProcessor(
 					iterator,
 					t,
-					NewHttpDownloadHandler(t.m.httpClient, link, t.threadWatcher),
+					NewHttpDownloadHandler(t.httpClient, link, t.threadWatcher),
 				)
 				t.group.Add(1)
 				go func() {
