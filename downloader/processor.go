@@ -15,7 +15,7 @@ type DownloadProcessor struct {
 	task         *DownloadTask
 }
 
-func NewDownloadProcessor(iterator *BlockIterator, task *DownloadTask, handler DownloadHandler) *DownloadProcessor {
+func newDownloadProcessor(iterator *BlockIterator, task *DownloadTask, handler DownloadHandler) *DownloadProcessor {
 	return &DownloadProcessor{
 		task:         task,
 		iterator:     iterator,
@@ -63,7 +63,7 @@ func (p *DownloadProcessor) handle(block *TaskBlock) (exit bool) {
 func (p *DownloadProcessor) Run() {
 	var lastBlock *TaskBlock
 	for {
-		block, err := p.iterator.next()
+		block, err := p.iterator.Next()
 		if err != nil {
 			p.task.storeError(err, true)
 			return

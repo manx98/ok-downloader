@@ -6,11 +6,12 @@ import (
 )
 
 const (
-	Waiting  = "Waiting"
-	Running  = "Running"
-	Paused   = "Paused"
-	Failed   = "Failed"
-	Finished = "Finished"
+	Waiting                      = "Waiting"
+	Running                      = "Running"
+	Paused                       = "Paused"
+	Failed                       = "Failed"
+	Finished                     = "Finished"
+	TaskStatusCalculatedInterval = 1 * time.Second
 )
 
 type DownloadTaskStatus struct {
