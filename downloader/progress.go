@@ -141,7 +141,6 @@ func (s *ProgressStore) generateData() error {
 		if err := block.FlushAll(); err != nil {
 			return err
 		}
-		s.blocks = append(s.blocks, block)
 	}
 	if err := s.WriteInt(s.blockCount, 8); err != nil {
 		return err

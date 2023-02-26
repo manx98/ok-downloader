@@ -13,37 +13,39 @@ import (
 )
 
 type DownloadTask struct {
-	maxWorkers      int
-	ctx             context.Context
-	cancel          context.CancelFunc
-	dataStore       RandomReadWriter
-	progressStore   *ProgressStore
-	totalWrite      atomic.Int64
-	activeThreads   atomic.Int32
-	status          string
-	eventHandler    *EventHandler
-	group           sync.WaitGroup
-	done            sync.WaitGroup
-	errorValue      atomic.Value
-	blockChan       chan *TaskBlock
-	links           []*Link
-	requireChan     chan *TaskBlock
-	providerChan    chan *TaskBlock
-	statusProcessor *downloadTaskStatusProcessor
-	httpClient      *http.Client
+	maxWorkers           int
+	ctx                  context.Context
+	cancel               context.CancelFunc
+	dataStore            RandomReadWriter
+	progressStore        *ProgressStore
+	totalWrite           atomic.Int64
+	activeThreads        atomic.Int32
+	status               string
+	eventHandler         *EventHandler
+	group                sync.WaitGroup
+	done                 sync.WaitGroup
+	errorValue           atomic.Value
+	blockChan            chan *TaskBlock
+	links                []*Link
+	requireChan          chan *TaskBlock
+	providerChan         chan *TaskBlock
+	statusProcessor      *downloadTaskStatusProcessor
+	httpClient           *http.Client
+	statusUpdateInterval time.Duration
 }
 
 func NewTask(optionsProvider DownloadTaskOptionsProvider) (task *DownloadTask, err error) {
 	options := optionsProvider()
 	task = &DownloadTask{
-		dataStore:    options.dataStore,
-		maxWorkers:   options.maxWorkers,
-		status:       Waiting,
-		eventHandler: options.eventHandler,
-		links:        options.links,
-		requireChan:  make(chan *TaskBlock),
-		providerChan: make(chan *TaskBlock),
-		httpClient:   options.httpClient,
+		dataStore:            options.dataStore,
+		maxWorkers:           options.maxWorkers,
+		status:               Waiting,
+		eventHandler:         options.eventHandler,
+		links:                options.links,
+		requireChan:          make(chan *TaskBlock),
+		providerChan:         make(chan *TaskBlock),
+		httpClient:           options.httpClient,
+		statusUpdateInterval: options.statusUpdateInterval,
 	}
 	if err = task.dataStore.Truncate(options.size); err != nil {
 		task = nil
@@ -145,7 +147,7 @@ func (t *DownloadTask) handFinalStatus() {
 func (t *DownloadTask) doCalculateStatus() {
 	defer t.done.Done()
 	defer t.handFinalStatus()
-	tik := time.Tick(TaskStatusCalculatedInterval)
+	tik := time.Tick(t.statusUpdateInterval)
 	for {
 		select {
 		case <-tik:
