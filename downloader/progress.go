@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"sync/atomic"
+	"sync"
 )
 
 const (
@@ -152,17 +152,20 @@ func (s *ProgressStore) generateData() error {
 type checkFunc func(block *TaskBlock) bool
 
 type BlockIterator struct {
-	atomic.Int32
+	offset int
+	mut    sync.Mutex
 	ctx    context.Context
 	check  checkFunc
 	blocks []*TaskBlock
 }
 
 func (it *BlockIterator) Next() (*TaskBlock, error) {
+	it.mut.Lock()
+	defer it.mut.Unlock()
 	for it.ctx.Err() == nil {
-		offset := it.Add(1)
-		if int(offset) < len(it.blocks) {
-			block := it.blocks[offset]
+		if it.offset < len(it.blocks) {
+			block := it.blocks[it.offset]
+			it.offset += 1
 			if it.check(block) {
 				return block, nil
 			}
@@ -179,7 +182,6 @@ func (s *ProgressStore) NewIterator(ctx context.Context, check checkFunc) *Block
 		ctx:    ctx,
 		check:  check,
 	}
-	iterator.Store(-1)
 	return iterator
 }
 
