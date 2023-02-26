@@ -130,9 +130,6 @@ func (o *DownloadTaskOptionsBuilder) Build() (DownloadTaskOptionsProvider, error
 	if o.progressStore == nil || o.dataStore == nil {
 		return nil, fmt.Errorf("download option progressStore (call SetProgressStore or SetProgressStoreByPath) and dataStore (call SetDataStore or SetDataStoreByPath) must provide: %w", InvalidDownloadOptions)
 	}
-	if o.httpClient == nil {
-		return nil, fmt.Errorf("download option httpClient must provide: %w", InvalidDownloadOptions)
-	}
 	options := &downloadTaskOptions{
 		links:                o.links,
 		size:                 o.size,
@@ -147,6 +144,9 @@ func (o *DownloadTaskOptionsBuilder) Build() (DownloadTaskOptionsProvider, error
 	}
 	if options.eventHandler == nil {
 		options.eventHandler = defaultEventHandler
+	}
+	if options.httpClient == nil {
+		options.httpClient = http.DefaultClient
 	}
 	if options.statusUpdateInterval <= 0 {
 		options.statusUpdateInterval = 1 * time.Second
