@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net/http"
 	"sort"
 	"strconv"
 	"strings"
@@ -78,4 +79,27 @@ func shouldIgnoreError(err error) bool {
 	return errors.Is(err, context.DeadlineExceeded) ||
 		errors.Is(err, context.Canceled) ||
 		err.Error() == "context deadline exceeded (Client.Timeout or context cancellation while reading body)"
+}
+
+func ResolveFileSize(httpClient *http.Client, link *Link) (int64, error) {
+	ctx, cancelFunc := context.WithCancel(context.Background())
+	defer cancelFunc()
+	request, err := link.createRequest(ctx, 0, 0)
+	if err != nil {
+		return 0, err
+	}
+	if resp, err := httpClient.Do(request); err != nil {
+		return 0, err
+	} else {
+		defer func() {
+			if err = resp.Body.Close(); err != nil {
+				log.Printf("Error closing request: %v", err)
+			}
+		}()
+		if isSuccessResponse(resp) {
+			return ResolveContentRange(resp.Header.Get("Content-Range"))
+		} else {
+			return 0, BadResponse
+		}
+	}
 }

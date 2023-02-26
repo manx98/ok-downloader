@@ -1,6 +1,16 @@
 package downloader
 
-type DownloadTaskOptions struct {
+import (
+	"fmt"
+	"math"
+	"net/http"
+	"net/url"
+	"os"
+)
+
+type DownloadTaskOptionsProvider func() *downloadTaskOptions
+
+type downloadTaskOptions struct {
 	links         []*Link
 	size          int64
 	minBlockSize  int
@@ -9,44 +19,129 @@ type DownloadTaskOptions struct {
 	eventHandler  *EventHandler
 	progressStore RandomReadWriter
 	dataStore     RandomReadWriter
+	httpClient    *http.Client
 }
 
-func NewDefaultDownloadTaskOptions() *DownloadTaskOptions {
-	return &DownloadTaskOptions{}
+type DownloadTaskOptionsBuilder struct {
+	*downloadTaskOptions
 }
 
-func (o *DownloadTaskOptions) AddLink(link *Link) *DownloadTaskOptions {
+var defaultEventHandler = &EventHandler{
+	OnStart: func(task *DownloadTask) {
+
+	},
+	OnFinal: func(task *DownloadTask, err error) {
+
+	},
+	OnPanic: func(task *DownloadTask, err any) {
+
+	},
+}
+
+func NewDownloadTaskOptionsBuilder() *DownloadTaskOptionsBuilder {
+	return &DownloadTaskOptionsBuilder{
+		&downloadTaskOptions{
+			httpClient:   http.DefaultClient,
+			minBlockSize: 65535,
+			maxBlockSize: math.MaxInt,
+			maxWorkers:   3,
+		},
+	}
+}
+
+func (o *DownloadTaskOptionsBuilder) SetClient(c *http.Client) {
+	o.httpClient = c
+}
+
+func (o *DownloadTaskOptionsBuilder) AddLink(link *Link) {
 	o.links = append(o.links, link)
 	o.maxWorkers += link.maxWorkers
-	return o
 }
 
-func (o *DownloadTaskOptions) SetSize(size int64) *DownloadTaskOptions {
+func (o *DownloadTaskOptionsBuilder) SetSize(size int64) {
 	o.size = size
-	return o
 }
 
-func (o *DownloadTaskOptions) SetMinBlockSize(minBlockSize int) *DownloadTaskOptions {
+func (o *DownloadTaskOptionsBuilder) SetMinBlockSize(minBlockSize int) {
 	o.minBlockSize = minBlockSize
-	return o
 }
 
-func (o *DownloadTaskOptions) SetMaxBlockSize(maxBlockSize int) *DownloadTaskOptions {
+func (o *DownloadTaskOptionsBuilder) SetMaxBlockSize(maxBlockSize int) {
 	o.maxBlockSize = maxBlockSize
-	return o
 }
 
-func (o *DownloadTaskOptions) SetEventHandler(eventHandler *EventHandler) *DownloadTaskOptions {
-	o.eventHandler = eventHandler
-	return o
+func (o *DownloadTaskOptionsBuilder) SetEventHandler(eventHandler EventHandler) {
+	o.eventHandler = &eventHandler
 }
 
-func (o *DownloadTaskOptions) SetProgressStore(progressStore RandomReadWriter) *DownloadTaskOptions {
+func (o *DownloadTaskOptionsBuilder) SetProgressStore(progressStore RandomReadWriter) {
 	o.progressStore = progressStore
-	return o
 }
 
-func (o *DownloadTaskOptions) SetDataStore(dataStore RandomReadWriter) *DownloadTaskOptions {
+func (o *DownloadTaskOptionsBuilder) SetProgressStoreByPath(file string) (err error) {
+	o.progressStore, err = os.OpenFile(file, os.O_CREATE|os.O_RDWR, os.ModePerm)
+	return
+}
+
+func (o *DownloadTaskOptionsBuilder) SetDataStore(dataStore RandomReadWriter) {
 	o.dataStore = dataStore
-	return o
+}
+
+func (o *DownloadTaskOptionsBuilder) SetDataStoreByPath(file string) (err error) {
+	o.dataStore, err = os.OpenFile(file, os.O_CREATE|os.O_RDWR, os.ModePerm)
+	return
+}
+
+func (o *DownloadTaskOptionsBuilder) SetHttpClient(httpClient *http.Client) {
+	o.httpClient = httpClient
+}
+
+func (o *DownloadTaskOptionsBuilder) Build() (DownloadTaskOptionsProvider, error) {
+	if len(o.links) <= 0 {
+		return nil, fmt.Errorf("at least one download link needs to be provided: %w", InvalidDownloadOptions)
+	} else {
+		for _, v := range o.links {
+			if _, err := url.Parse(v.downloadLink); err != nil {
+				return nil, err
+			}
+			if v.maxWorkers <= 0 {
+				return nil, fmt.Errorf("the maximum number of threads to download the link must be greater than zero: %w", InvalidDownloadOptions)
+			}
+		}
+	}
+	if o.size < 0 {
+		return nil, fmt.Errorf("download option size must be greater than or equal to 0: %w", InvalidDownloadOptions)
+	}
+	if o.minBlockSize <= 0 {
+		return nil, fmt.Errorf("download option minBlockSize must be greater than 0: %w", InvalidDownloadOptions)
+	}
+	if o.maxBlockSize <= 0 {
+		return nil, fmt.Errorf("download option maxBlockSize must be greater than 0: %w", InvalidDownloadOptions)
+	}
+	if o.minBlockSize > o.maxBlockSize {
+		return nil, fmt.Errorf("download option maxBlockSize must be greater than minBlockSize: %w", InvalidDownloadOptions)
+	}
+	if o.eventHandler == nil {
+		o.eventHandler = defaultEventHandler
+	}
+	if o.progressStore == nil || o.dataStore == nil {
+		return nil, fmt.Errorf("download option progressStore (call SetProgressStore or SetProgressStoreByPath) and dataStore (call SetDataStore or SetDataStoreByPath) must provide: %w", InvalidDownloadOptions)
+	}
+	if o.httpClient == nil {
+		return nil, fmt.Errorf("download option httpClient must provide: %w", InvalidDownloadOptions)
+	}
+	options := &downloadTaskOptions{
+		links:         o.links,
+		size:          o.size,
+		minBlockSize:  o.minBlockSize,
+		maxBlockSize:  o.maxBlockSize,
+		maxWorkers:    o.maxWorkers,
+		eventHandler:  o.eventHandler,
+		progressStore: o.progressStore,
+		dataStore:     o.dataStore,
+		httpClient:    o.httpClient,
+	}
+	return func() *downloadTaskOptions {
+		return options
+	}, nil
 }
