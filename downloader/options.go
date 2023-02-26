@@ -6,20 +6,22 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"time"
 )
 
 type DownloadTaskOptionsProvider func() *downloadTaskOptions
 
 type downloadTaskOptions struct {
-	links         []*Link
-	size          int64
-	minBlockSize  int
-	maxBlockSize  int
-	maxWorkers    int
-	eventHandler  *EventHandler
-	progressStore RandomReadWriter
-	dataStore     RandomReadWriter
-	httpClient    *http.Client
+	links                []*Link
+	size                 int64
+	minBlockSize         int
+	maxBlockSize         int
+	maxWorkers           int
+	eventHandler         *EventHandler
+	progressStore        RandomReadWriter
+	dataStore            RandomReadWriter
+	httpClient           *http.Client
+	statusUpdateInterval time.Duration
 }
 
 type DownloadTaskOptionsBuilder struct {
@@ -96,6 +98,10 @@ func (o *DownloadTaskOptionsBuilder) SetHttpClient(httpClient *http.Client) {
 	o.httpClient = httpClient
 }
 
+func (o *DownloadTaskOptionsBuilder) SetStatusUpdateInterval(duration time.Duration) {
+	o.statusUpdateInterval = duration
+}
+
 func (o *DownloadTaskOptionsBuilder) Build() (DownloadTaskOptionsProvider, error) {
 	if len(o.links) <= 0 {
 		return nil, fmt.Errorf("at least one download link needs to be provided: %w", InvalidDownloadOptions)
@@ -121,25 +127,29 @@ func (o *DownloadTaskOptionsBuilder) Build() (DownloadTaskOptionsProvider, error
 	if o.minBlockSize > o.maxBlockSize {
 		return nil, fmt.Errorf("download option maxBlockSize must be greater than minBlockSize: %w", InvalidDownloadOptions)
 	}
-	if o.eventHandler == nil {
-		o.eventHandler = defaultEventHandler
-	}
 	if o.progressStore == nil || o.dataStore == nil {
 		return nil, fmt.Errorf("download option progressStore (call SetProgressStore or SetProgressStoreByPath) and dataStore (call SetDataStore or SetDataStoreByPath) must provide: %w", InvalidDownloadOptions)
 	}
-	if o.httpClient == nil {
-		return nil, fmt.Errorf("download option httpClient must provide: %w", InvalidDownloadOptions)
-	}
 	options := &downloadTaskOptions{
-		links:         o.links,
-		size:          o.size,
-		minBlockSize:  o.minBlockSize,
-		maxBlockSize:  o.maxBlockSize,
-		maxWorkers:    o.maxWorkers,
-		eventHandler:  o.eventHandler,
-		progressStore: o.progressStore,
-		dataStore:     o.dataStore,
-		httpClient:    o.httpClient,
+		links:                o.links,
+		size:                 o.size,
+		minBlockSize:         o.minBlockSize,
+		maxBlockSize:         o.maxBlockSize,
+		maxWorkers:           o.maxWorkers,
+		eventHandler:         o.eventHandler,
+		progressStore:        o.progressStore,
+		dataStore:            o.dataStore,
+		httpClient:           o.httpClient,
+		statusUpdateInterval: o.statusUpdateInterval,
+	}
+	if options.eventHandler == nil {
+		options.eventHandler = defaultEventHandler
+	}
+	if options.httpClient == nil {
+		options.httpClient = http.DefaultClient
+	}
+	if options.statusUpdateInterval <= 0 {
+		options.statusUpdateInterval = 1 * time.Second
 	}
 	return func() *downloadTaskOptions {
 		return options

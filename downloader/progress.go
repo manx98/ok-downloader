@@ -137,38 +137,36 @@ type BlockIterator struct {
 	store  *ProgressStore
 	offset int64
 	total  int64
-	mtx    sync.Mutex
 	ctx    context.Context
+	mux    sync.Mutex
 }
 
 func (it *BlockIterator) next() (block *TaskBlock, err error) {
-	it.mtx.Lock()
-	defer it.mtx.Unlock()
-	if !it.hasNext() {
-		return nil, nil
+	it.mux.Lock()
+	defer it.mux.Unlock()
+	if it.offset >= it.total {
+		return
 	}
-	offset := it.offset*16 + DataHeaderSize
-	block = it.store.newBlock(offset, 0, 0)
-	if block.start, err = it.store.ReadInt64(offset); err == nil {
-		block.end, err = it.store.ReadInt64(offset + 8)
+	block = it.store.newBlock(it.offset, 0, 0)
+	if block.start, err = it.store.ReadInt64(it.offset); err == nil {
+		it.offset += 8
+		block.end, err = it.store.ReadInt64(it.offset)
 	}
 	if err != nil {
 		return
 	}
-	it.offset += 1
+	it.offset += 8
 	return block, it.ctx.Err()
 }
 
-func (it *BlockIterator) hasNext() bool {
-	return it.total > it.offset
-}
-
 func (s *ProgressStore) newIterator(ctx context.Context) *BlockIterator {
-	return &BlockIterator{
-		store: s,
-		total: int64(s.blockCount),
-		ctx:   ctx,
+	iterator := &BlockIterator{
+		offset: DataHeaderSize,
+		store:  s,
+		total:  int64(s.blockCount)*16 + DataHeaderSize,
+		ctx:    ctx,
 	}
+	return iterator
 }
 
 func (s *ProgressStore) getBeastBlockSize() int64 {
