@@ -49,6 +49,7 @@ func NewTask(optionsProvider DownloadTaskOptionsProvider) (*DownloadTask, error)
 			links:        options.links,
 			requireChan:  make(chan *TaskBlock),
 			providerChan: make(chan *TaskBlock),
+			httpClient:   options.httpClient,
 		}
 		task.Context, task.cancel = context.WithCancel(context.Background())
 		task.progressStore, err = newProgressStore(options.size, options.minBlockSize, options.maxBlockSize, options.maxWorkers, options.progressStore, task)
