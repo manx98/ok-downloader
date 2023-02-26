@@ -21,24 +21,28 @@ func NewHttpDownloadHandler(client *http.Client, link *Link, watcher HandlerWatc
 		defer watcher(false)
 		ct, cancel := context.WithCancel(ctx)
 		defer cancel()
-		if req, err := link.createRequest(ct, block.start, block.end); err != nil {
+		req, err := link.createRequest(ct, block.start, block.end)
+		if err != nil {
 			return err
-		} else if rsp, err := client.Do(req); err != nil {
-			return err
-		} else {
-			defer func() {
+		}
+		rsp, err := client.Do(req)
+		defer func() {
+			cancel()
+			if rsp != nil {
 				if err := rsp.Body.Close(); err != nil {
 					log.Printf("failed to close request body: %v", err)
 				}
-			}()
-			if !isSuccessResponse(rsp) {
-				return fmt.Errorf("server responded with bad status code %d: %w", rsp.StatusCode, BadResponse)
 			}
-			_, err = io.Copy(block, rsp.Body)
-			if err != nil {
-				if !errors.Is(err, WriteAlreadyFinished) {
-					return err
-				}
+		}()
+		if err != nil {
+			return err
+		}
+		if !isSuccessResponse(rsp) {
+			return fmt.Errorf("server responded with bad status code %d: %w", rsp.StatusCode, BadResponse)
+		}
+		if _, err = io.Copy(block, rsp.Body); err != nil {
+			if !errors.Is(err, WriteAlreadyFinished) {
+				return err
 			}
 		}
 		return nil

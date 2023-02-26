@@ -1,9 +1,10 @@
 package downloader
 
+import "io"
+
 type RandomReadWriter interface {
-	ReadAt(data []byte, offset int64) (int, error)
-	WriteAt(data []byte, offset int64) (int, error)
-	Close() error
-	Sync() error
+	io.WriterAt
+	io.ReaderAt
+	io.Closer
 	Truncate(size int64) error
 }

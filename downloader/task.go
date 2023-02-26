@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/google/uuid"
 	"io/fs"
 	"log"
 	"net/http"
@@ -14,9 +13,8 @@ import (
 )
 
 type DownloadTask struct {
-	id         string
-	maxWorkers int
-	context.Context
+	maxWorkers      int
+	ctx             context.Context
 	cancel          context.CancelFunc
 	dataStore       RandomReadWriter
 	progressStore   *ProgressStore
@@ -31,38 +29,34 @@ type DownloadTask struct {
 	links           []*Link
 	requireChan     chan *TaskBlock
 	providerChan    chan *TaskBlock
-	statusProcessor *DownloadTaskStatusProcessor
+	statusProcessor *downloadTaskStatusProcessor
 	httpClient      *http.Client
 }
 
-func NewTask(optionsProvider DownloadTaskOptionsProvider) (*DownloadTask, error) {
+func NewTask(optionsProvider DownloadTaskOptionsProvider) (task *DownloadTask, err error) {
 	options := optionsProvider()
-	if u, err := uuid.NewUUID(); err != nil {
-		return nil, err
-	} else {
-		task := &DownloadTask{
-			id:           u.String(),
-			dataStore:    options.dataStore,
-			maxWorkers:   options.maxWorkers,
-			status:       Waiting,
-			eventHandler: options.eventHandler,
-			links:        options.links,
-			requireChan:  make(chan *TaskBlock),
-			providerChan: make(chan *TaskBlock),
-			httpClient:   options.httpClient,
-		}
-		task.Context, task.cancel = context.WithCancel(context.Background())
-		task.progressStore, err = newProgressStore(options.size, options.minBlockSize, options.maxBlockSize, options.maxWorkers, options.progressStore, task)
-		if err == nil {
-			task.statusProcessor = NewDownloadTaskStatusProcessor(task)
-		}
-		return task, err
+	task = &DownloadTask{
+		dataStore:    options.dataStore,
+		maxWorkers:   options.maxWorkers,
+		status:       Waiting,
+		eventHandler: options.eventHandler,
+		links:        options.links,
+		requireChan:  make(chan *TaskBlock),
+		providerChan: make(chan *TaskBlock),
+		httpClient:   options.httpClient,
 	}
-}
-
-// GetID get the id of the task
-func (t *DownloadTask) GetID() string {
-	return t.id
+	if err = task.dataStore.Truncate(options.size); err != nil {
+		task = nil
+		return
+	}
+	task.ctx, task.cancel = context.WithCancel(context.Background())
+	task.progressStore, err = newProgressStore(options.size, options.minBlockSize, options.maxBlockSize, options.maxWorkers, options.progressStore, task)
+	if err == nil {
+		task.statusProcessor = newDownloadTaskStatusProcessor(task)
+	} else {
+		task = nil
+	}
+	return task, err
 }
 
 // GetTotalDownload Get the size of the downloaded data
@@ -155,7 +149,7 @@ func (t *DownloadTask) doCalculateStatus() {
 			if status.CompletedSize == status.Size {
 				return
 			}
-		case <-t.Done():
+		case <-t.ctx.Done():
 			return
 		}
 	}
@@ -171,7 +165,7 @@ func (t *DownloadTask) Run() {
 		}
 	}()
 	t.status = Running
-	iterator := t.progressStore.newIterator(t)
+	iterator := t.progressStore.newIterator(t.ctx)
 	found := true
 	for found {
 		found = false
@@ -229,4 +223,8 @@ func (t *DownloadTask) storeError(err error, exit bool) {
 // GetStatusInfo Get the status information of the current download task
 func (t *DownloadTask) GetStatusInfo() *DownloadTaskStatus {
 	return t.statusProcessor.GetInfo()
+}
+
+func (t *DownloadTask) Done() <-chan struct{} {
+	return t.ctx.Done()
 }

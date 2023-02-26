@@ -28,7 +28,7 @@ func NewDownloadProcessor(iterator *BlockIterator, task *DownloadTask, handler D
 func (p *DownloadProcessor) provider(block *TaskBlock) {
 	RecoverGoroutine(func() {
 		select {
-		case <-p.task.Done():
+		case <-p.task.ctx.Done():
 			return
 		case p.providerChan <- block:
 		}
@@ -38,7 +38,7 @@ func (p *DownloadProcessor) provider(block *TaskBlock) {
 func (p *DownloadProcessor) require(block *TaskBlock) {
 	RecoverGoroutine(func() {
 		select {
-		case <-p.task.Done():
+		case <-p.task.ctx.Done():
 		case p.requireChan <- block:
 		}
 	})
@@ -53,7 +53,7 @@ func (p *DownloadProcessor) handle(block *TaskBlock) (exit bool) {
 			p.task.storeError(fmt.Errorf("download thread occur painc: %v", err), false)
 		}
 	}()
-	if err := p.handler(p.task, block); err != nil {
+	if err := p.handler(p.task.ctx, block); err != nil {
 		p.task.storeError(err, false)
 		return true
 	}
@@ -84,7 +84,7 @@ func (p *DownloadProcessor) Run() {
 	p.require(lastBlock)
 	for {
 		select {
-		case <-p.task.Done():
+		case <-p.task.ctx.Done():
 			return
 		case lastBlock = <-p.providerChan:
 			if p.handle(lastBlock) {
