@@ -67,13 +67,18 @@ func (t *DownloadTask) GetTotalDownload() int64 {
 // GetCompletedSize Get the completed size of the downloaded task
 func (t *DownloadTask) GetCompletedSize() (int64, error) {
 	unCompletedSize := int64(0)
-	for iterator := t.progressStore.newIterator(context.Background()); iterator.hasNext(); {
-		block, err := iterator.next()
+	iterator := t.progressStore.NewOkIterator(context.Background())
+	for {
+		block, err := iterator.Next()
 		if err != nil {
 			return 0, fmt.Errorf("failed to load completed size: %w", err)
 		}
-		if block.start <= block.end {
-			unCompletedSize += block.end - block.start + 1
+		if block == nil {
+			break
+		}
+		size := block.end - block.start + 1
+		if size > 0 {
+			unCompletedSize += size
 		}
 	}
 	return t.progressStore.size - unCompletedSize, nil
@@ -140,7 +145,7 @@ func (t *DownloadTask) handFinalStatus() {
 func (t *DownloadTask) doCalculateStatus() {
 	defer t.done.Done()
 	defer t.handFinalStatus()
-	tik := time.Tick(1 * time.Second)
+	tik := time.Tick(TaskStatusCalculatedInterval)
 	for {
 		select {
 		case <-tik:
@@ -165,16 +170,16 @@ func (t *DownloadTask) Run() {
 		}
 	}()
 	t.status = Running
-	iterator := t.progressStore.newIterator(t.ctx)
+	iterator := t.progressStore.NewOkIterator(t.ctx)
 	found := true
 	for found {
 		found = false
 		for _, link := range t.links {
 			if link.maxWorkers > 0 {
-				processor := NewDownloadProcessor(
+				processor := newDownloadProcessor(
 					iterator,
 					t,
-					NewHttpDownloadHandler(t.httpClient, link, t.threadWatcher),
+					newHttpDownloadHandler(t.httpClient, link, t.threadWatcher),
 				)
 				t.group.Add(1)
 				go func() {

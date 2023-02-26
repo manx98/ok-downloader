@@ -6,10 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"sync"
+	"sync/atomic"
 )
 
-const DataHeaderSize = int64(12)
+const (
+	SizeHeaderOffset       = int64(0)
+	BlockCountHeaderOffset = int64(8)
+	DataHeaderSize         = int64(12)
+)
 
 // ProgressStore
 //
@@ -26,6 +30,7 @@ type ProgressStore struct {
 	maxBlockSize  int
 	minBlockCount int
 	completedSize int64
+	blocks        []*TaskBlock
 }
 
 func (s *ProgressStore) ReadInt64(seek int64) (int64, error) {
@@ -58,18 +63,28 @@ func (s *ProgressStore) WriteInt(value int, seek int64) error {
 	return err
 }
 
-func (s *ProgressStore) splitBlocks(okBlocks, badBlocks []*TaskBlock) error {
+func (s *ProgressStore) splitBlocks() error {
 	blockSize := s.getBeastBlockSize()
 	splitSize := blockSize + int64(s.minBlockSize)
 	blockCount := s.blockCount
-	for _, value := range okBlocks {
+	badIterator := s.NewBadIterator(s.task.ctx)
+	okIterator := s.NewOkIterator(s.task.ctx)
+	for {
+		value, err := okIterator.Next()
+		if err != nil {
+			return err
+		}
+		if value == nil {
+			break
+		}
 		for value.end-value.start+1 >= splitSize {
 			var block *TaskBlock
-			if len(badBlocks) > 0 {
-				block = badBlocks[0]
-				badBlocks = badBlocks[1:]
-			} else {
+			if block, err = badIterator.Next(); err != nil {
+				return err
+			}
+			if block == nil {
 				block = s.newBlock(DataHeaderSize+int64(blockCount*16), 0, 0)
+				s.blocks = append(s.blocks, block)
 				blockCount += 1
 			}
 			block.end = value.end
@@ -111,7 +126,7 @@ func (s *ProgressStore) generateData() error {
 	blockSize := s.getBeastBlockSize()
 	start := int64(0)
 	offset := DataHeaderSize
-	if err := s.WriteInt64(s.size, 0); err != nil {
+	if err := s.WriteInt64(s.size, SizeHeaderOffset); err != nil {
 		return err
 	}
 	for start < s.size {
@@ -126,6 +141,7 @@ func (s *ProgressStore) generateData() error {
 		if err := block.FlushAll(); err != nil {
 			return err
 		}
+		s.blocks = append(s.blocks, block)
 	}
 	if err := s.WriteInt(s.blockCount, 8); err != nil {
 		return err
@@ -133,42 +149,50 @@ func (s *ProgressStore) generateData() error {
 	return nil
 }
 
+type checkFunc func(block *TaskBlock) bool
+
 type BlockIterator struct {
-	store  *ProgressStore
-	offset int64
-	total  int64
-	mtx    sync.Mutex
+	atomic.Int32
 	ctx    context.Context
+	check  checkFunc
+	blocks []*TaskBlock
 }
 
-func (it *BlockIterator) next() (block *TaskBlock, err error) {
-	it.mtx.Lock()
-	defer it.mtx.Unlock()
-	if !it.hasNext() {
-		return nil, nil
+func (it *BlockIterator) Next() (*TaskBlock, error) {
+	for it.ctx.Err() == nil {
+		offset := it.Add(1)
+		if int(offset) < len(it.blocks) {
+			block := it.blocks[offset]
+			if it.check(block) {
+				return block, nil
+			}
+		} else {
+			break
+		}
 	}
-	offset := it.offset*16 + DataHeaderSize
-	block = it.store.newBlock(offset, 0, 0)
-	if block.start, err = it.store.ReadInt64(offset); err == nil {
-		block.end, err = it.store.ReadInt64(offset + 8)
-	}
-	if err != nil {
-		return
-	}
-	it.offset += 1
-	return block, it.ctx.Err()
+	return nil, it.ctx.Err()
 }
 
-func (it *BlockIterator) hasNext() bool {
-	return it.total > it.offset
+func (s *ProgressStore) NewIterator(ctx context.Context, check checkFunc) *BlockIterator {
+	iterator := &BlockIterator{
+		blocks: s.blocks,
+		ctx:    ctx,
+		check:  check,
+	}
+	iterator.Store(-1)
+	return iterator
 }
 
-func (s *ProgressStore) newIterator(ctx context.Context) *BlockIterator {
-	return &BlockIterator{
-		store: s,
-		total: int64(s.blockCount),
-		ctx:   ctx,
-	}
+func (s *ProgressStore) NewBadIterator(ctx context.Context) *BlockIterator {
+	return s.NewIterator(ctx, func(block *TaskBlock) bool {
+		return block.start > block.end
+	})
+}
+
+func (s *ProgressStore) NewOkIterator(ctx context.Context) *BlockIterator {
+	return s.NewIterator(ctx, func(block *TaskBlock) bool {
+		return block.start <= block.end
+	})
 }
 
 func (s *ProgressStore) getBeastBlockSize() int64 {
@@ -181,56 +205,64 @@ func (s *ProgressStore) getBeastBlockSize() int64 {
 	return blockSize
 }
 
-func (s *ProgressStore) init() error {
-	var offset int64
-	size, err := s.ReadInt64(offset)
-	offset += 8
+func (s *ProgressStore) loadBlocks() (ok bool, err error) {
+	var size int64
+	size, err = s.ReadInt64(SizeHeaderOffset)
 	if err != nil {
 		if errors.Is(err, io.EOF) {
-			return s.generateData()
-		} else {
-			return err
+			err = s.generateData()
+			ok = true
 		}
+		return
 	} else if size != s.size {
-		return fmt.Errorf("data size %d not match %d: %w", size, s.size, InvalidProgressData)
+		err = fmt.Errorf("data size %d not match %d: %w", size, s.size, InvalidProgressData)
+		return
 	}
-	s.blockCount, err = s.ReadInt(offset)
+	s.blockCount, err = s.ReadInt(BlockCountHeaderOffset)
 	if err != nil {
-		return err
+		return
 	}
 	if s.blockCount <= 0 {
-		return fmt.Errorf("block count %d must great than zero: %w", s.blockCount, InvalidProgressData)
+		err = fmt.Errorf("block count %d must great than zero: %w", s.blockCount, InvalidProgressData)
+		return
 	}
-	offset += 4
-	var blocks []*TaskBlock
-	var badBlocks []*TaskBlock
-	iterator := s.newIterator(s.task.ctx)
-	for {
-		block, err := iterator.next()
-		if err != nil {
-			return err
+	offset := DataHeaderSize
+	s.blocks = make([]*TaskBlock, s.blockCount)
+	for i := 0; i < s.blockCount; i++ {
+		block := s.newBlock(offset, 0, 0)
+		if block.start, err = s.ReadInt64(offset); err == nil {
+			offset += 8
+			block.end, err = s.ReadInt64(offset)
+			offset += 8
 		}
-		if block == nil {
+		if err != nil {
 			break
 		}
+		s.blocks[i] = block
+	}
+	return
+}
+
+func (s *ProgressStore) init() error {
+	if ok, err := s.loadBlocks(); err != nil {
+		return fmt.Errorf("failed to load blocks from store: %w", err)
+	} else if ok {
+		return nil
+	}
+	var blocks []*TaskBlock
+	for _, block := range s.blocks {
 		if block.start <= block.end {
 			blocks = append(blocks, block)
-		} else {
-			badBlocks = append(badBlocks, block)
 		}
 	}
-	if err = MergeBlocks(blocks); err != nil {
+	if err := MergeBlocks(blocks); err != nil {
 		return err
 	}
 	var uncompletedSize int64
-	var okBlocks []*TaskBlock
 	for _, block := range blocks {
 		size := block.end - block.start + 1
 		if size > 0 {
 			uncompletedSize += size
-			okBlocks = append(okBlocks, block)
-		} else {
-			badBlocks = append(badBlocks, block)
 		}
 	}
 	if uncompletedSize > s.size {
@@ -238,7 +270,7 @@ func (s *ProgressStore) init() error {
 	} else {
 		s.completedSize = s.size - uncompletedSize
 	}
-	return s.splitBlocks(okBlocks, badBlocks)
+	return s.splitBlocks()
 }
 
 func (s *ProgressStore) Close() error {

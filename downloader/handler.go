@@ -15,7 +15,7 @@ func isSuccessResponse(response *http.Response) bool {
 
 type HandlerWatcher func(in bool)
 
-func NewHttpDownloadHandler(client *http.Client, link *Link, watcher HandlerWatcher) DownloadHandler {
+func newHttpDownloadHandler(client *http.Client, link *Link, watcher HandlerWatcher) DownloadHandler {
 	return func(ctx context.Context, block *TaskBlock) error {
 		watcher(true)
 		defer watcher(false)
