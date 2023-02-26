@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"sync"
 )
 
@@ -102,7 +101,7 @@ func (s *ProgressStore) newBlock(offset, start, end int64) *TaskBlock {
 		offset:       offset,
 		dataStore:    s.task.dataStore,
 		totalWrite:   &s.task.totalWrite,
-		ctx:          s.task,
+		ctx:          s.task.ctx,
 		providerChan: s.task.providerChan,
 		requireChan:  s.task.requireChan,
 	}
@@ -183,11 +182,6 @@ func (s *ProgressStore) getBeastBlockSize() int64 {
 }
 
 func (s *ProgressStore) init() error {
-	defer func() {
-		if err := s.store.Sync(); err != nil {
-			log.Printf("Error syncing progress: %v", err)
-		}
-	}()
 	var offset int64
 	size, err := s.ReadInt64(offset)
 	offset += 8
@@ -210,7 +204,7 @@ func (s *ProgressStore) init() error {
 	offset += 4
 	var blocks []*TaskBlock
 	var badBlocks []*TaskBlock
-	iterator := s.newIterator(s.task)
+	iterator := s.newIterator(s.task.ctx)
 	for {
 		block, err := iterator.next()
 		if err != nil {

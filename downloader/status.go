@@ -22,15 +22,15 @@ type DownloadTaskStatus struct {
 	Err           error
 }
 
-type DownloadTaskStatusProcessor struct {
+type downloadTaskStatusProcessor struct {
 	atomic.Value
 	lastCalculatedTime time.Time
 	lastDownloadedSize int64
 	task               *DownloadTask
 }
 
-func NewDownloadTaskStatusProcessor(task *DownloadTask) *DownloadTaskStatusProcessor {
-	processor := &DownloadTaskStatusProcessor{
+func newDownloadTaskStatusProcessor(task *DownloadTask) *downloadTaskStatusProcessor {
+	processor := &downloadTaskStatusProcessor{
 		task:               task,
 		lastCalculatedTime: time.Now(),
 	}
@@ -38,7 +38,7 @@ func NewDownloadTaskStatusProcessor(task *DownloadTask) *DownloadTaskStatusProce
 	return processor
 }
 
-func (r *DownloadTaskStatusProcessor) calculate() {
+func (r *downloadTaskStatusProcessor) calculate() {
 	size, err := r.task.GetCompletedSize()
 	if err != nil {
 		r.task.storeError(err, true)
@@ -54,7 +54,7 @@ func (r *DownloadTaskStatusProcessor) calculate() {
 	r.lastDownloadedSize = totalDownload
 }
 
-func (r *DownloadTaskStatusProcessor) GetInfo() *DownloadTaskStatus {
+func (r *downloadTaskStatusProcessor) GetInfo() *DownloadTaskStatus {
 	status := r.Load().(*DownloadTaskStatus)
 	status.Status = r.task.GetStatus()
 	status.Size = r.task.GetSize()
