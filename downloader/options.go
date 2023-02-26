@@ -55,11 +55,6 @@ func (o *DownloadTaskOptionsBuilder) SetClient(c *http.Client) {
 	o.httpClient = c
 }
 
-func (o *DownloadTaskOptionsBuilder) AddLink(link *Link) {
-	o.links = append(o.links, link)
-	o.maxWorkers += link.maxWorkers
-}
-
 func (o *DownloadTaskOptionsBuilder) SetSize(size int64) {
 	o.size = size
 }
@@ -102,17 +97,19 @@ func (o *DownloadTaskOptionsBuilder) SetStatusUpdateInterval(duration time.Durat
 	o.statusUpdateInterval = duration
 }
 
-func (o *DownloadTaskOptionsBuilder) Build() (DownloadTaskOptionsProvider, error) {
-	if len(o.links) <= 0 {
+func (o *DownloadTaskOptionsBuilder) Build(links ...*Link) (DownloadTaskOptionsProvider, error) {
+	var maxWorkers int
+	if len(links) <= 0 {
 		return nil, fmt.Errorf("at least one download link needs to be provided: %w", InvalidDownloadOptions)
 	} else {
-		for _, v := range o.links {
+		for _, v := range links {
 			if _, err := url.Parse(v.downloadLink); err != nil {
 				return nil, err
 			}
 			if v.maxWorkers <= 0 {
 				return nil, fmt.Errorf("the maximum number of threads to download the link must be greater than zero: %w", InvalidDownloadOptions)
 			}
+			maxWorkers += v.maxWorkers
 		}
 	}
 	if o.size < 0 {
@@ -131,11 +128,11 @@ func (o *DownloadTaskOptionsBuilder) Build() (DownloadTaskOptionsProvider, error
 		return nil, fmt.Errorf("download option progressStore (call SetProgressStore or SetProgressStoreByPath) and dataStore (call SetDataStore or SetDataStoreByPath) must provide: %w", InvalidDownloadOptions)
 	}
 	options := &downloadTaskOptions{
-		links:                o.links,
+		links:                links,
 		size:                 o.size,
 		minBlockSize:         o.minBlockSize,
 		maxBlockSize:         o.maxBlockSize,
-		maxWorkers:           o.maxWorkers,
+		maxWorkers:           maxWorkers,
 		eventHandler:         o.eventHandler,
 		progressStore:        o.progressStore,
 		dataStore:            o.dataStore,

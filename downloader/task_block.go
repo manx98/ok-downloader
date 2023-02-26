@@ -23,8 +23,8 @@ func (block *TaskBlock) String() string {
 }
 
 func (block *TaskBlock) Write(p []byte) (n int, err error) {
+	block.totalWrite.Add(int64(len(p)))
 	n, err = block.dataStore.WriteAt(p, block.start)
-	block.totalWrite.Add(int64(n))
 	block.start += int64(n)
 	if err = block.checkPoint(); err != nil {
 		return
