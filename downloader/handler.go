@@ -48,12 +48,3 @@ func newHttpDownloadHandler(client *http.Client, link *Link, watcher HandlerWatc
 		return nil
 	}
 }
-
-type EventHandler struct {
-	// OnStart it is called when the download task is started
-	OnStart func(task *DownloadTask)
-	// OnFinal it is called when the download task is exited
-	OnFinal func(task *DownloadTask, err error)
-	// OnPanic  it is called when the download task occur panic
-	OnPanic func(task *DownloadTask, err any)
-}

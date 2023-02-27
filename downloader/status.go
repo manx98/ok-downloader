@@ -6,18 +6,17 @@ import (
 )
 
 const (
-	Waiting                      = "Waiting"
-	Running                      = "Running"
-	Paused                       = "Paused"
-	Failed                       = "Failed"
-	Finished                     = "Finished"
-	TaskStatusCalculatedInterval = 1 * time.Second
+	Waiting = "Waiting"
+	Running = "Running"
+	Paused  = "Paused"
+	Failed  = "Failed"
+	Success = "Success"
 )
 
 type DownloadTaskStatus struct {
 	Size          int64
 	CompletedSize int64
-	Status        string // Status of the download(Waiting、Running、Paused、Failed、Finished)
+	Status        string // Status of the download(Waiting、Running、Paused、Failed、Success)
 	Speed         int64  // Download speed (bytes per second)
 	Threads       int32
 	Err           error

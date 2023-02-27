@@ -11,13 +11,14 @@ import (
 
 type DownloadTaskOptionsProvider func() *downloadTaskOptions
 
+const TaskStatusCalculatedInterval = 1 * time.Second
+
 type downloadTaskOptions struct {
 	links                []*Link
 	size                 int64
 	minBlockSize         int
 	maxBlockSize         int
 	maxWorkers           int
-	eventHandler         *EventHandler
 	progressStore        RandomReadWriter
 	dataStore            RandomReadWriter
 	httpClient           *http.Client
@@ -28,25 +29,14 @@ type DownloadTaskOptionsBuilder struct {
 	*downloadTaskOptions
 }
 
-var defaultEventHandler = &EventHandler{
-	OnStart: func(task *DownloadTask) {
-
-	},
-	OnFinal: func(task *DownloadTask, err error) {
-
-	},
-	OnPanic: func(task *DownloadTask, err any) {
-
-	},
-}
-
 func NewDownloadTaskOptionsBuilder() *DownloadTaskOptionsBuilder {
 	return &DownloadTaskOptionsBuilder{
 		&downloadTaskOptions{
-			httpClient:   http.DefaultClient,
-			minBlockSize: 65535,
-			maxBlockSize: math.MaxInt,
-			maxWorkers:   3,
+			httpClient:           http.DefaultClient,
+			minBlockSize:         65535,
+			maxBlockSize:         math.MaxInt,
+			maxWorkers:           3,
+			statusUpdateInterval: TaskStatusCalculatedInterval,
 		},
 	}
 }
@@ -65,10 +55,6 @@ func (o *DownloadTaskOptionsBuilder) SetMinBlockSize(minBlockSize int) {
 
 func (o *DownloadTaskOptionsBuilder) SetMaxBlockSize(maxBlockSize int) {
 	o.maxBlockSize = maxBlockSize
-}
-
-func (o *DownloadTaskOptionsBuilder) SetEventHandler(eventHandler EventHandler) {
-	o.eventHandler = &eventHandler
 }
 
 func (o *DownloadTaskOptionsBuilder) SetProgressStore(progressStore RandomReadWriter) {
@@ -133,14 +119,10 @@ func (o *DownloadTaskOptionsBuilder) Build(links ...*Link) (DownloadTaskOptionsP
 		minBlockSize:         o.minBlockSize,
 		maxBlockSize:         o.maxBlockSize,
 		maxWorkers:           maxWorkers,
-		eventHandler:         o.eventHandler,
 		progressStore:        o.progressStore,
 		dataStore:            o.dataStore,
 		httpClient:           o.httpClient,
 		statusUpdateInterval: o.statusUpdateInterval,
-	}
-	if options.eventHandler == nil {
-		options.eventHandler = defaultEventHandler
 	}
 	if options.httpClient == nil {
 		options.httpClient = http.DefaultClient
