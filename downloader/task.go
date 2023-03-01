@@ -163,6 +163,7 @@ func (t *DownloadTask) doCalculateStatus() {
 
 // Run  Execute the current download task
 func (t *DownloadTask) Run() {
+	defer t.Close()
 	t.status = Running
 	iterator := t.progressStore.NewOkIterator(t.ctx)
 	found := true
@@ -192,7 +193,6 @@ func (t *DownloadTask) Run() {
 	t.group.Wait()
 	t.cancel()
 	t.done.Wait()
-	t.Close()
 }
 
 // GetSize Get the total size of the files to be downloaded
