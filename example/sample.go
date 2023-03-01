@@ -59,10 +59,11 @@ func main() {
 		log.Fatalf("error creating task: %v", err)
 	}
 	go func() {
-		tk := time.Tick(3 * time.Second)
+		tk := time.NewTicker(3 * time.Second)
+		defer tk.Stop()
 		for {
 			select {
-			case <-tk:
+			case <-tk.C:
 				info := task.GetStatusInfo()
 				log.Printf("Downloading[status=%s][speed=%dKB/s][threads=%d][%.2f%s]: %v", info.Status, info.Speed/1024, info.Threads, float64(info.CompletedSize*100)/float64(info.Size), "%", info.Err)
 			case <-task.Done():
