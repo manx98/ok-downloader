@@ -145,10 +145,11 @@ func (t *DownloadTask) handFinalStatus() {
 func (t *DownloadTask) doCalculateStatus() {
 	defer t.done.Done()
 	defer t.handFinalStatus()
-	tik := time.Tick(t.statusUpdateInterval)
+	tik := time.NewTicker(t.statusUpdateInterval)
+	defer tik.Stop()
 	for {
 		select {
-		case <-tik:
+		case <-tik.C:
 			t.statusProcessor.calculate()
 			status := t.GetStatusInfo()
 			if status.CompletedSize == status.Size {
@@ -191,6 +192,7 @@ func (t *DownloadTask) Run() {
 	t.group.Wait()
 	t.cancel()
 	t.done.Wait()
+	t.Close()
 }
 
 // GetSize Get the total size of the files to be downloaded

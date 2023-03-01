@@ -65,9 +65,7 @@ func RecoverGoroutine(f func()) {
 
 func RecoverApplyFunc(f func()) {
 	defer func() {
-		if err := recover(); err != nil {
-			log.Printf("[recovered] call function occur panic: %v", err)
-		}
+		recover()
 	}()
 	f()
 }
